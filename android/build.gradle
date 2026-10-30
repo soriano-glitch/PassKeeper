@@ -1,0 +1,51 @@
+// Redirect Gradle build directories into <flutter project>/build so the flutter
+// tool can locate produced artifacts (matches templates/app/android-java.tmpl).
+def newBuildDir = rootProject.layout.buildDirectory.dir('../../build').get()
+rootProject.layout.buildDirectory.value(newBuildDir)
+
+subprojects {
+    def newSubprojectBuildDir = newBuildDir.dir(project.name)
+    project.layout.buildDirectory.value(newSubprojectBuildDir)
+}
+
+allprojects {
+    repositories {
+        google()
+        mavenCentral()
+    }
+}
+
+// The Flutter plugin loader includes plugin subprojects before :app, but some
+// plugin build scripts (e.g. android_file_picker 2.1.1) read the "flutter"
+// extension at evaluation time. That extension is vended by FlutterPlugin, which
+// is applied when :app evaluates, so force every subproject to evaluate after
+// :app (same pattern the current template uses).
+subprojects {
+    evaluationDependsOn ':app'
+}
+
+// Some plugin subprojects (e.g. file_picker) pin an old compileSdk internally,
+// while their dependencies (flutter_plugin_android_lifecycle etc.) require 36.
+// Force every Android subproject to compile against SDK 36 (backward safe).
+// Projects already evaluated above (e.g. :app, which already sets 36) cannot
+// take afterEvaluate hooks and are skipped.
+subprojects { sub ->
+    if (!sub.state.executed) {
+        sub.afterEvaluate { sub2 ->
+            def android = sub2.extensions.findByName('android')
+            if (android != null) {
+                try {
+                    if (android.compileSdkVersion != null && android.compileSdkVersion < 36) {
+                        android.compileSdkVersion 36
+                    }
+                } catch (Exception ignored) {
+                    // extension layout differs on some plugins; skip silently
+                }
+            }
+        }
+    }
+}
+
+tasks.register('clean', Delete) {
+    delete(rootProject.layout.buildDirectory)
+}
